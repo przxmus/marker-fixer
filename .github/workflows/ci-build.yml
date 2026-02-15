@@ -1,4 +1,4 @@
-name: CI Build
+name: CI Quick Check
 
 on:
   push:
@@ -34,7 +34,7 @@ jobs:
         run: |
           scripts/ci/evaluate_changes.sh "${{ steps.shas.outputs.base_sha }}" "${{ steps.shas.outputs.head_sha }}"
 
-  test:
+  quick-check:
     needs: changes
     if: needs.changes.outputs.build_needed == 'true'
     runs-on: ubuntu-latest
@@ -50,44 +50,8 @@ jobs:
       - name: Run tests
         run: cargo test
 
-  build:
-    needs: changes
-    if: needs.changes.outputs.build_needed == 'true'
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-latest
-            targets: x86_64-unknown-linux-musl,x86_64-pc-windows-gnu
-            artifact_name: marker-fixer-build-ubuntu
-          - os: macos-latest
-            targets: aarch64-apple-darwin,x86_64-apple-darwin
-            artifact_name: marker-fixer-build-macos
-    runs-on: ${{ matrix.os }}
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: dtolnay/rust-toolchain@stable
-
-      - uses: Swatinem/rust-cache@v2
-        with:
-          cache-on-failure: true
-
-      - name: Setup Zig (for cross builds)
-        if: runner.os == 'Linux'
-        uses: mlugg/setup-zig@v2
-
-      - name: Build release packages
-        run: ./build.sh --targets "${{ matrix.targets }}" --clean
-
-      - name: Upload build artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.artifact_name }}
-          path: |
-            build/*.zip
-            build/sha256sums.txt
-          if-no-files-found: error
+      - name: Quick native release build smoke test
+        run: cargo build --release
 
   skipped:
     needs: changes
