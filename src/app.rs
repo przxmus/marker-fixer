@@ -8,36 +8,77 @@ use crate::error::{IoResultExt, MarkerFixerError, Result};
 use crate::{ffprobe, mp4, xmp};
 
 #[derive(Debug, Clone, Parser)]
-#[command(name = "marker-fixer", version, about = "Convert OBS MP4 chapters into Premiere XMP markers")]
+#[command(
+    name = "marker-fixer",
+    version,
+    about = "Convert OBS MP4 chapters into Adobe Premiere Pro markers.",
+    long_about = "marker-fixer reads chapter markers from OBS MP4 files and writes Premiere-compatible XMP markers into the MP4 metadata.\n\nYou can pass files, directories (non-recursive), or drag-and-drop multiple files onto the executable.",
+    after_help = "Examples:\n  marker-fixer recording.mp4\n  marker-fixer recording.mp4 --in-place false --output-suffix _fixed\n  marker-fixer ./captures --dry-run\n\nTip: If a file has malformed existing XMP, rerun with --force to replace it."
+)]
 pub struct Cli {
-    #[arg(value_name = "PATH", required = true)]
+    #[arg(
+        value_name = "PATH",
+        required = true,
+        help = "Input MP4 file(s) or directories"
+    )]
     pub paths: Vec<PathBuf>,
 
-    #[arg(long = "in-place", action = ArgAction::Set, default_value_t = true)]
+    #[arg(
+        long = "in-place",
+        action = ArgAction::Set,
+        default_value_t = true,
+        help = "Overwrite the source file",
+        long_help = "If true (default), marker-fixer updates each source file directly. If false, it writes a sibling file using --output-suffix."
+    )]
     pub in_place: bool,
 
-    #[arg(long = "output-suffix", default_value = "_fixed")]
+    #[arg(
+        long = "output-suffix",
+        default_value = "_fixed",
+        help = "Suffix for output filename when --in-place=false"
+    )]
     pub output_suffix: String,
 
-    #[arg(long = "force", default_value_t = false)]
+    #[arg(
+        long = "force",
+        default_value_t = false,
+        help = "Replace malformed existing XMP instead of failing"
+    )]
     pub force: bool,
 
-    #[arg(long = "ffprobe")]
+    #[arg(
+        long = "ffprobe",
+        help = "Path to ffprobe binary (overrides bundled and PATH lookup)"
+    )]
     pub ffprobe: Option<PathBuf>,
 
-    #[arg(long = "ffmpeg")]
+    #[arg(
+        long = "ffmpeg",
+        help = "Path to ffmpeg binary (reserved for future processing steps)"
+    )]
     pub ffmpeg: Option<PathBuf>,
 
-    #[arg(long = "verbose", default_value_t = false)]
+    #[arg(
+        short,
+        long = "verbose",
+        default_value_t = false,
+        help = "Show extra diagnostics"
+    )]
     pub verbose: bool,
 
-    #[arg(long = "dry-run", default_value_t = false)]
+    #[arg(
+        short = 'n',
+        long = "dry-run",
+        default_value_t = false,
+        help = "Analyze and report without writing files"
+    )]
     pub dry_run: bool,
 }
 
 #[derive(Debug, Clone)]
 pub enum FileStatus {
     Converted,
+    ConvertedDryRun,
     SkippedNoChapters,
     SkippedNotMp4,
     Failed(String),
@@ -49,6 +90,15 @@ pub struct FileReport {
     pub status: FileStatus,
 }
 
+#[derive(Default)]
+struct Summary {
+    converted: usize,
+    converted_dry_run: usize,
+    skipped_no_chapters: usize,
+    skipped_not_mp4: usize,
+    failed: usize,
+}
+
 pub struct App;
 
 impl App {
@@ -56,7 +106,8 @@ impl App {
         match Self::run_inner() {
             Ok(exit_code) => exit_code,
             Err(err) => {
-                eprintln!("error: {err}");
+                eprintln!("ERROR: {err}");
+                eprintln!("Tip: run with --help for usage details.");
                 1
             }
         }
@@ -69,30 +120,100 @@ impl App {
             return Err(MarkerFixerError::NoInputPaths);
         }
 
+        print_preflight_summary(&cli, &files);
+
         if cli.ffmpeg.is_some() && cli.verbose {
-            eprintln!("Note: --ffmpeg is reserved for future use; current pipeline uses ffprobe only.");
+            eprintln!(
+                "Note: --ffmpeg is currently reserved for future workflows. Current conversion uses ffprobe only."
+            );
         }
 
-        let reports = files.iter().map(|path| process_file(path, &cli)).collect::<Vec<_>>();
+        let reports = files
+            .iter()
+            .map(|path| process_file(path, &cli))
+            .collect::<Vec<_>>();
 
-        let mut has_failed = false;
-        for report in &reports {
-            match &report.status {
-                FileStatus::Converted => println!("{}: converted", report.path.display()),
-                FileStatus::SkippedNoChapters => {
-                    println!("{}: skipped(no_chapters)", report.path.display())
-                }
-                FileStatus::SkippedNotMp4 => {
-                    println!("{}: skipped(not_mp4)", report.path.display())
-                }
-                FileStatus::Failed(message) => {
-                    has_failed = true;
-                    println!("{}: failed({message})", report.path.display());
-                }
+        let summary = print_reports(&reports);
+        print_summary(&summary, cli.dry_run);
+
+        Ok(if summary.failed > 0 { 1 } else { 0 })
+    }
+}
+
+fn print_preflight_summary(cli: &Cli, files: &[PathBuf]) {
+    println!("marker-fixer {}", env!("CARGO_PKG_VERSION"));
+    println!("- Inputs: {} file(s)", files.len());
+    println!(
+        "- Mode: {}",
+        if cli.dry_run {
+            "dry-run (no files will be changed)"
+        } else if cli.in_place {
+            "in-place overwrite"
+        } else {
+            "write alongside source files"
+        }
+    );
+    if !cli.in_place {
+        println!("- Output suffix: {}", cli.output_suffix);
+    }
+    if cli.force {
+        println!("- Force mode: enabled (malformed existing XMP will be replaced)");
+    }
+    println!();
+}
+
+fn print_reports(reports: &[FileReport]) -> Summary {
+    let mut summary = Summary::default();
+
+    for report in reports {
+        match &report.status {
+            FileStatus::Converted => {
+                summary.converted += 1;
+                println!("[OK]   {} -> converted", report.path.display());
+            }
+            FileStatus::ConvertedDryRun => {
+                summary.converted_dry_run += 1;
+                println!("[PLAN] {} -> would convert", report.path.display());
+            }
+            FileStatus::SkippedNoChapters => {
+                summary.skipped_no_chapters += 1;
+                println!(
+                    "[SKIP] {} -> no embedded chapters found",
+                    report.path.display()
+                );
+            }
+            FileStatus::SkippedNotMp4 => {
+                summary.skipped_not_mp4 += 1;
+                println!("[SKIP] {} -> not an .mp4 file", report.path.display());
+            }
+            FileStatus::Failed(message) => {
+                summary.failed += 1;
+                println!("[ERR]  {} -> {}", report.path.display(), message);
             }
         }
+    }
 
-        Ok(if has_failed { 1 } else { 0 })
+    summary
+}
+
+fn print_summary(summary: &Summary, dry_run: bool) {
+    println!();
+    println!("Summary:");
+    if dry_run {
+        println!("- Would convert: {}", summary.converted_dry_run);
+    } else {
+        println!("- Converted: {}", summary.converted);
+    }
+    println!("- Skipped (no chapters): {}", summary.skipped_no_chapters);
+    println!("- Skipped (not MP4): {}", summary.skipped_not_mp4);
+    println!("- Failed: {}", summary.failed);
+
+    if summary.failed == 0 {
+        println!("\nDone. You can now import the output MP4(s) into Premiere Pro.");
+    } else {
+        println!(
+            "\nCompleted with errors. Re-run with --verbose for diagnostics, or use --force for malformed existing XMP."
+        );
     }
 }
 
@@ -159,7 +280,9 @@ fn process_file(path: &Path, cli: &Cli) -> FileReport {
     let incoming_markers = probe
         .chapters
         .iter()
-        .map(|chapter| xmp::marker_from_chapter(chapter.start_seconds, chapter.title.as_deref(), probe.fps))
+        .map(|chapter| {
+            xmp::marker_from_chapter(chapter.start_seconds, chapter.title.as_deref(), probe.fps)
+        })
         .collect::<Vec<_>>();
 
     let existing_payload = match mp4::read_xmp_payload(path) {
@@ -175,25 +298,47 @@ fn process_file(path: &Path, cli: &Cli) -> FileReport {
     let (existing_markers, frame_rate) = if let Some(payload) = existing_payload {
         match String::from_utf8(payload) {
             Ok(xml_data) => match xmp::parse_markers(&xml_data) {
-                Ok(parsed) => (parsed.markers, parsed.frame_rate.unwrap_or_else(|| probe.frame_rate_expr.clone())),
-                Err(err) if cli.force => (Vec::new(), probe.frame_rate_expr.clone()),
+                Ok(parsed) => (
+                    parsed.markers,
+                    parsed
+                        .frame_rate
+                        .unwrap_or_else(|| probe.frame_rate_expr.clone()),
+                ),
+                Err(err) if cli.force => {
+                    if cli.verbose {
+                        eprintln!(
+                            "Replacing malformed existing XMP in {} due to --force: {}",
+                            path.display(),
+                            err
+                        );
+                    }
+                    (Vec::new(), probe.frame_rate_expr.clone())
+                }
                 Err(err) => {
                     return FileReport {
                         path: path.to_path_buf(),
-                        status: FileStatus::Failed(err.to_string()),
+                        status: FileStatus::Failed(format!(
+                            "Malformed existing XMP: {err}. Re-run with --force to replace it."
+                        )),
                     };
                 }
             },
             Err(err) if cli.force => {
                 if cli.verbose {
-                    eprintln!("Ignoring malformed UTF-8 XMP in {} due to --force: {err}", path.display());
+                    eprintln!(
+                        "Replacing non-UTF8 existing XMP in {} due to --force: {}",
+                        path.display(),
+                        err
+                    );
                 }
                 (Vec::new(), probe.frame_rate_expr.clone())
             }
             Err(err) => {
                 return FileReport {
                     path: path.to_path_buf(),
-                    status: FileStatus::Failed(format!("existing XMP is not UTF-8: {err}")),
+                    status: FileStatus::Failed(format!(
+                        "Existing XMP is not UTF-8: {err}. Re-run with --force to replace it."
+                    )),
                 };
             }
         }
@@ -207,7 +352,7 @@ fn process_file(path: &Path, cli: &Cli) -> FileReport {
     if cli.dry_run {
         return FileReport {
             path: path.to_path_buf(),
-            status: FileStatus::Converted,
+            status: FileStatus::ConvertedDryRun,
         };
     }
 

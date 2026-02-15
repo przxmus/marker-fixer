@@ -18,6 +18,20 @@ pub struct ProbeData {
     pub chapters: Vec<ChapterInput>,
 }
 
+#[derive(Debug, Clone)]
+struct ToolResolution {
+    path: PathBuf,
+    source: ToolSource,
+    expected_bundle_path: PathBuf,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ToolSource {
+    Override,
+    Bundled,
+    PathFallback,
+}
+
 #[derive(Debug, Deserialize)]
 struct ProbeOutput {
     #[serde(default)]
@@ -45,9 +59,9 @@ struct ProbeChapterTags {
 }
 
 pub fn probe_media(file_path: &Path, ffprobe_override: Option<&Path>) -> Result<ProbeData> {
-    let ffprobe_path = resolve_ffprobe_path(ffprobe_override)?;
+    let resolution = resolve_ffprobe_path(ffprobe_override)?;
 
-    let output = Command::new(&ffprobe_path)
+    let output = Command::new(&resolution.path)
         .arg("-v")
         .arg("error")
         .arg("-print_format")
@@ -56,9 +70,28 @@ pub fn probe_media(file_path: &Path, ffprobe_override: Option<&Path>) -> Result<
         .arg("-show_chapters")
         .arg(file_path)
         .output()
-        .map_err(|source| MarkerFixerError::ExternalTool {
-            tool: "ffprobe",
-            message: format!("failed to execute {}: {source}", ffprobe_path.display()),
+        .map_err(|source| {
+            let mut message = format!(
+                "failed to execute ffprobe at {}: {source}",
+                resolution.path.display()
+            );
+
+            if source.kind() == std::io::ErrorKind::NotFound
+                && resolution.source == ToolSource::PathFallback
+            {
+                message.push_str(
+                    ". ffprobe was not found in PATH and no bundled binary was detected.",
+                );
+                message.push_str(&format!(
+                    " Expected bundled path: {}",
+                    resolution.expected_bundle_path.display()
+                ));
+            }
+
+            MarkerFixerError::ExternalTool {
+                tool: "ffprobe",
+                message,
+            }
         })?;
 
     if !output.status.success() {
@@ -66,7 +99,11 @@ pub fn probe_media(file_path: &Path, ffprobe_override: Option<&Path>) -> Result<
         return Err(MarkerFixerError::ExternalTool {
             tool: "ffprobe",
             message: if stderr.is_empty() {
-                format!("{} exited with status {}", ffprobe_path.display(), output.status)
+                format!(
+                    "{} exited with status {}",
+                    resolution.path.display(),
+                    output.status
+                )
             } else {
                 stderr
             },
@@ -74,7 +111,7 @@ pub fn probe_media(file_path: &Path, ffprobe_override: Option<&Path>) -> Result<
     }
 
     let parsed: ProbeOutput = serde_json::from_slice(&output.stdout)
-        .map_err(|err| MarkerFixerError::InvalidMetadata(format!("invalid ffprobe json: {err}")))?;
+        .map_err(|err| MarkerFixerError::InvalidMetadata(format!("invalid ffprobe JSON: {err}")))?;
 
     let (fps, frame_rate_expr) = detect_fps(&parsed.streams)?;
     let chapters = parsed
@@ -104,7 +141,9 @@ fn detect_fps(streams: &[ProbeStream]) -> Result<(f64, String)> {
     let video_stream = streams
         .iter()
         .find(|stream| stream.codec_type.as_deref() == Some("video"))
-        .ok_or_else(|| MarkerFixerError::InvalidMetadata("missing video stream".to_string()))?;
+        .ok_or_else(|| {
+            MarkerFixerError::InvalidMetadata("No video stream found in ffprobe output".to_string())
+        })?;
 
     if let Some(rate) = &video_stream.avg_frame_rate {
         if let Some(fps) = parse_rate(rate) {
@@ -119,7 +158,7 @@ fn detect_fps(streams: &[ProbeStream]) -> Result<(f64, String)> {
     }
 
     Err(MarkerFixerError::InvalidMetadata(
-        "unable to derive FPS from avg_frame_rate/r_frame_rate".to_string(),
+        "Unable to derive FPS from avg_frame_rate/r_frame_rate".to_string(),
     ))
 }
 
@@ -155,43 +194,53 @@ fn parse_rational_parts(value: &str) -> Option<(u64, u64)> {
     Some((numerator, denominator))
 }
 
-fn resolve_ffprobe_path(ffprobe_override: Option<&Path>) -> Result<PathBuf> {
+fn resolve_ffprobe_path(ffprobe_override: Option<&Path>) -> Result<ToolResolution> {
+    let expected_bundle_path = bundled_tool_path("ffprobe");
+
     if let Some(path) = ffprobe_override {
         if path.exists() {
-            return Ok(path.to_path_buf());
+            return Ok(ToolResolution {
+                path: path.to_path_buf(),
+                source: ToolSource::Override,
+                expected_bundle_path,
+            });
         }
         return Err(MarkerFixerError::ExternalTool {
             tool: "ffprobe",
-            message: format!("provided path does not exist: {}", path.display()),
+            message: format!("Provided --ffprobe path does not exist: {}", path.display()),
         });
     }
 
-    if let Some(path) = find_bundled_tool("ffprobe") {
-        return Ok(path);
+    if expected_bundle_path.exists() {
+        return Ok(ToolResolution {
+            path: expected_bundle_path.clone(),
+            source: ToolSource::Bundled,
+            expected_bundle_path,
+        });
     }
 
-    Ok(PathBuf::from("ffprobe"))
+    Ok(ToolResolution {
+        path: PathBuf::from("ffprobe"),
+        source: ToolSource::PathFallback,
+        expected_bundle_path,
+    })
 }
 
-fn find_bundled_tool(tool: &str) -> Option<PathBuf> {
-    let exe_path = std::env::current_exe().ok()?;
-    let exe_dir = exe_path.parent()?;
+fn bundled_tool_path(tool: &str) -> PathBuf {
+    let exe_path = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("."));
+    let exe_dir = exe_path
+        .parent()
+        .map_or_else(|| PathBuf::from("."), Path::to_path_buf);
 
     let os = std::env::consts::OS;
     let arch = std::env::consts::ARCH;
-
     let filename = if os == "windows" {
         format!("{tool}.exe")
     } else {
         tool.to_string()
     };
 
-    let candidate = exe_dir.join("fftools").join(os).join(arch).join(filename);
-    if candidate.exists() {
-        Some(candidate)
-    } else {
-        None
-    }
+    exe_dir.join("fftools").join(os).join(arch).join(filename)
 }
 
 #[cfg(test)]

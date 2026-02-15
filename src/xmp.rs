@@ -26,13 +26,21 @@ pub fn chapter_start_to_frame(start_seconds: f64, fps: f64) -> u64 {
 pub fn marker_from_chapter(start_seconds: f64, title: Option<&str>, fps: f64) -> Marker {
     Marker {
         start_frame: chapter_start_to_frame(start_seconds, fps),
-        name: title.map(|value| value.trim().to_string()).filter(|value| !value.is_empty()),
+        name: title
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty()),
         comment: None,
         guid: Uuid::new_v4().to_string(),
     }
 }
 
 pub fn parse_markers(xmp_xml: &str) -> Result<ParsedMarkers> {
+    if !xmp_xml.contains("<x:xmpmeta") || !xmp_xml.contains("</x:xmpmeta>") {
+        return Err(MarkerFixerError::InvalidXmp(
+            "XMP payload is missing required <x:xmpmeta> boundaries".to_string(),
+        ));
+    }
+
     let mut reader = Reader::from_str(xmp_xml);
     reader.config_mut().trim_text(true);
 
@@ -55,9 +63,13 @@ pub fn parse_markers(xmp_xml: &str) -> Result<ParsedMarkers> {
 
                     for attr in e.attributes().flatten() {
                         let key = attr.key.as_ref();
-                        let value = attr.decode_and_unescape_value(reader.decoder()).map_err(|err| {
-                            MarkerFixerError::InvalidXmp(format!("failed to decode xmp attribute: {err}"))
-                        })?;
+                        let value =
+                            attr.decode_and_unescape_value(reader.decoder())
+                                .map_err(|err| {
+                                    MarkerFixerError::InvalidXmp(format!(
+                                        "failed to decode xmp attribute: {err}"
+                                    ))
+                                })?;
 
                         match key {
                             b"xmpDM:trackName" => track_name = Some(value.to_string()),
@@ -80,7 +92,9 @@ pub fn parse_markers(xmp_xml: &str) -> Result<ParsedMarkers> {
                     if in_markers_seq {
                         if let Some(start_time) = start_time {
                             let start_frame = start_time.parse::<u64>().map_err(|err| {
-                                MarkerFixerError::InvalidXmp(format!("invalid marker startTime '{start_time}': {err}"))
+                                MarkerFixerError::InvalidXmp(format!(
+                                    "invalid marker startTime '{start_time}': {err}"
+                                ))
                             })?;
                             markers.push(Marker {
                                 start_frame,
@@ -98,7 +112,8 @@ pub fn parse_markers(xmp_xml: &str) -> Result<ParsedMarkers> {
                 let name = e.name();
                 if name.as_ref() == b"xmpDM:markers" {
                     in_markers_seq = false;
-                } else if name.as_ref() == b"rdf:Description" && in_markers_track && !in_markers_seq {
+                } else if name.as_ref() == b"rdf:Description" && in_markers_track && !in_markers_seq
+                {
                     in_markers_track = false;
                 }
             }
@@ -113,7 +128,10 @@ pub fn parse_markers(xmp_xml: &str) -> Result<ParsedMarkers> {
         }
     }
 
-    Ok(ParsedMarkers { frame_rate, markers })
+    Ok(ParsedMarkers {
+        frame_rate,
+        markers,
+    })
 }
 
 pub fn merge_markers(existing: Vec<Marker>, incoming: Vec<Marker>) -> Vec<Marker> {
@@ -170,13 +188,21 @@ pub fn generate_xmp(frame_rate: &str, markers: &[Marker]) -> String {
         xml.push_str(&escape(&marker.guid));
         xml.push('\"');
 
-        if let Some(name) = marker.name.as_deref().filter(|value| !value.trim().is_empty()) {
+        if let Some(name) = marker
+            .name
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+        {
             xml.push_str(" xmpDM:name=\"");
             xml.push_str(&escape(name));
             xml.push('\"');
         }
 
-        if let Some(comment) = marker.comment.as_deref().filter(|value| !value.trim().is_empty()) {
+        if let Some(comment) = marker
+            .comment
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+        {
             xml.push_str(" xmpDM:comment=\"");
             xml.push_str(&escape(comment));
             xml.push('\"');

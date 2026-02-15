@@ -10,8 +10,7 @@ const BOX_HEADER_LEN: u64 = 8;
 const BOX_EXTENDED_SIZE_LEN: u64 = 8;
 const BOX_UUID_LEN: u64 = 16;
 const ADOBE_XMP_UUID: [u8; 16] = [
-    0xBE, 0x7A, 0xCF, 0xCB, 0x97, 0xA9, 0x42, 0xE8, 0x9C, 0x71, 0x99, 0x94, 0x91, 0xE3, 0xAF,
-    0xAC,
+    0xBE, 0x7A, 0xCF, 0xCB, 0x97, 0xA9, 0x42, 0xE8, 0x9C, 0x71, 0x99, 0x94, 0x91, 0xE3, 0xAF, 0xAC,
 ];
 
 #[derive(Debug, Clone)]
@@ -61,10 +60,9 @@ pub fn write_xmp_payload(input_path: &Path, output_path: &Path, xmp_payload: &[u
 
         let mut reader = BufReader::new(File::open(input_path).at_path(input_path)?);
 
-        if let Some(existing_box) = boxes
-            .iter()
-            .find(|candidate| candidate.box_type == *b"uuid" && candidate.uuid == Some(ADOBE_XMP_UUID))
-        {
+        if let Some(existing_box) = boxes.iter().find(|candidate| {
+            candidate.box_type == *b"uuid" && candidate.uuid == Some(ADOBE_XMP_UUID)
+        }) {
             copy_range(&mut reader, &mut writer, 0, existing_box.start, input_path)?;
             write_xmp_box(&mut writer, xmp_payload)?;
             copy_range(
@@ -82,10 +80,12 @@ pub fn write_xmp_payload(input_path: &Path, output_path: &Path, xmp_payload: &[u
         writer.flush().at_path(&temp_path)?;
     }
 
-    temp_file.persist(output_path).map_err(|err| MarkerFixerError::Io {
-        path: output_path.to_path_buf(),
-        source: err.error,
-    })?;
+    temp_file
+        .persist(output_path)
+        .map_err(|err| MarkerFixerError::Io {
+            path: output_path.to_path_buf(),
+            source: err.error,
+        })?;
 
     Ok(())
 }
@@ -95,25 +95,33 @@ fn parse_root_boxes(file: &mut File, file_len: u64) -> Result<Vec<RootBox>> {
     let mut offset = 0_u64;
 
     while offset + BOX_HEADER_LEN <= file_len {
-        file.seek(SeekFrom::Start(offset)).map_err(|source| MarkerFixerError::Io {
-            path: Path::new("<mp4>").to_path_buf(),
-            source,
-        })?;
+        file.seek(SeekFrom::Start(offset))
+            .map_err(|source| MarkerFixerError::Io {
+                path: Path::new("<mp4>").to_path_buf(),
+                source,
+            })?;
 
         let mut header = [0_u8; 8];
         file.read_exact(&mut header)
-            .map_err(|source| MarkerFixerError::Io { path: Path::new("<mp4>").to_path_buf(), source })?;
+            .map_err(|source| MarkerFixerError::Io {
+                path: Path::new("<mp4>").to_path_buf(),
+                source,
+            })?;
 
         let size32 = u32::from_be_bytes([header[0], header[1], header[2], header[3]]) as u64;
         let box_type = [header[4], header[5], header[6], header[7]];
 
         let (box_size, mut header_len) = if size32 == 1 {
             let mut ext_size_buf = [0_u8; 8];
-            file.read_exact(&mut ext_size_buf).map_err(|source| MarkerFixerError::Io {
-                path: Path::new("<mp4>").to_path_buf(),
-                source,
-            })?;
-            (u64::from_be_bytes(ext_size_buf), BOX_HEADER_LEN + BOX_EXTENDED_SIZE_LEN)
+            file.read_exact(&mut ext_size_buf)
+                .map_err(|source| MarkerFixerError::Io {
+                    path: Path::new("<mp4>").to_path_buf(),
+                    source,
+                })?;
+            (
+                u64::from_be_bytes(ext_size_buf),
+                BOX_HEADER_LEN + BOX_EXTENDED_SIZE_LEN,
+            )
         } else if size32 == 0 {
             (file_len.saturating_sub(offset), BOX_HEADER_LEN)
         } else {
@@ -139,10 +147,11 @@ fn parse_root_boxes(file: &mut File, file_len: u64) -> Result<Vec<RootBox>> {
                 )));
             }
             let mut uuid = [0_u8; 16];
-            file.read_exact(&mut uuid).map_err(|source| MarkerFixerError::Io {
-                path: Path::new("<mp4>").to_path_buf(),
-                source,
-            })?;
+            file.read_exact(&mut uuid)
+                .map_err(|source| MarkerFixerError::Io {
+                    path: Path::new("<mp4>").to_path_buf(),
+                    source,
+                })?;
             header_len += BOX_UUID_LEN;
             Some(uuid)
         } else {
@@ -177,14 +186,18 @@ fn write_xmp_box(writer: &mut impl Write, xmp_payload: &[u8]) -> Result<()> {
             path: Path::new("<output>").to_path_buf(),
             source,
         })?;
-    writer.write_all(b"uuid").map_err(|source| MarkerFixerError::Io {
-        path: Path::new("<output>").to_path_buf(),
-        source,
-    })?;
-    writer.write_all(&ADOBE_XMP_UUID).map_err(|source| MarkerFixerError::Io {
-        path: Path::new("<output>").to_path_buf(),
-        source,
-    })?;
+    writer
+        .write_all(b"uuid")
+        .map_err(|source| MarkerFixerError::Io {
+            path: Path::new("<output>").to_path_buf(),
+            source,
+        })?;
+    writer
+        .write_all(&ADOBE_XMP_UUID)
+        .map_err(|source| MarkerFixerError::Io {
+            path: Path::new("<output>").to_path_buf(),
+            source,
+        })?;
     writer
         .write_all(xmp_payload)
         .map_err(|source| MarkerFixerError::Io {
@@ -194,7 +207,13 @@ fn write_xmp_box(writer: &mut impl Write, xmp_payload: &[u8]) -> Result<()> {
     Ok(())
 }
 
-fn copy_range(reader: &mut BufReader<File>, writer: &mut BufWriter<&mut File>, start: u64, len: u64, src_path: &Path) -> Result<()> {
+fn copy_range(
+    reader: &mut BufReader<File>,
+    writer: &mut BufWriter<&mut File>,
+    start: u64,
+    len: u64,
+    src_path: &Path,
+) -> Result<()> {
     reader.seek(SeekFrom::Start(start)).at_path(src_path)?;
     let mut take = reader.take(len);
     std::io::copy(&mut take, writer).map_err(|source| MarkerFixerError::Io {
