@@ -124,5 +124,5 @@ jobs:
           gh release create "$TAG" \
             --draft \
             --title "marker-fixer $TAG" \
-            --notes "Draft release for $TAG.\n\nIncludes cross-platform binaries with bundled ffmpeg/ffprobe runtime files." \
+            --notes "Draft release for $TAG.\n\nIncludes cross-platform binaries. Runtime FFmpeg/ffprobe is auto-downloaded when missing." \
             "${ASSETS[@]}"

@@ -1,25 +1,12 @@
-# Vendored FFmpeg Runtime Files
+# Runtime Download Directory
 
-Place prebuilt FFmpeg runtime files here so `build.sh` can bundle them into release artifacts.
+`marker-fixer` no longer ships FFmpeg binaries in this repository.
 
-Required layout:
+At runtime, if `ffmpeg`/`ffprobe` are not found via:
+1. CLI override,
+2. local `fftools/<os>/<arch>/` next to executable,
+3. system PATH,
 
-- `vendor/fftools/macos/arm64/ffmpeg`
-- `vendor/fftools/macos/arm64/ffprobe`
-- `vendor/fftools/macos/x86_64/ffmpeg`
-- `vendor/fftools/macos/x86_64/ffprobe`
-- `vendor/fftools/linux/x86_64/ffmpeg`
-- `vendor/fftools/linux/x86_64/ffprobe`
-- `vendor/fftools/windows/x86_64/ffmpeg.exe`
-- `vendor/fftools/windows/x86_64/ffprobe.exe`
+the app downloads platform binaries automatically into that local `fftools/<os>/<arch>/` directory.
 
-For Windows, include any required FFmpeg `.dll` files in:
-- `vendor/fftools/windows/x86_64/`
-
-`build.sh` copies the full platform directory so required DLLs remain standalone runtime files.
-
-Current populated sources:
-- Linux x86_64 and Windows x86_64 (LGPL shared): BtbN FFmpeg Builds
-  - https://github.com/BtbN/FFmpeg-Builds/releases
-- macOS arm64 and macOS x86_64 binaries: eugeneware/ffmpeg-static release assets
-  - https://github.com/eugeneware/ffmpeg-static/releases
+This repository keeps only this placeholder directory.

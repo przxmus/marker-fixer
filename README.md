@@ -7,36 +7,25 @@ It updates MP4 metadata only (no video/audio re-encode).
 ## Quick Start
 
 1. Download a prebuilt package from GitHub Releases (recommended for most users).
-
-2. Unzip the archive for your OS and run:
-
-```bash
-./marker-fixer recording.mp4
-```
-
-Alternative (for developers): build from source.
-
-1. Build the project:
-
-```bash
-./build.sh
-```
-
-2. Run it on a file:
+2. Unzip the archive for your OS.
+3. Run:
 
 ```bash
 ./marker-fixer recording.mp4
 ```
 
-3. Import the MP4 into Premiere Pro and check clip markers.
+## Automatic FFmpeg/FFprobe Download
 
-## What It Does
+`marker-fixer` needs `ffprobe` (and validates `ffmpeg` availability).
 
-- Reads embedded chapters from MP4 via `ffprobe`
-- Converts chapter start times into frame-based Premiere marker time
-- Writes/updates XMP marker metadata in MP4 (`uuid` XMP box)
-- Keeps original MP4 chapters intact
-- Merges with existing XMP markers and deduplicates by marker time
+At runtime it resolves tools in this order:
+1. CLI override (`--ffprobe` / `--ffmpeg`)
+2. Local bundled path next to executable (`fftools/<os>/<arch>/...`)
+3. System PATH
+4. Automatic download (only if still missing)
+
+Automatic download happens only when all previous options are unavailable.
+Downloaded files are stored next to the executable in `fftools/<os>/<arch>/`.
 
 ## Usage
 
@@ -66,6 +55,9 @@ marker-fixer ./captures --dry-run
 
 # Replace malformed existing XMP metadata
 marker-fixer recording.mp4 --force
+
+# Explicit tool paths (skip auto-download)
+marker-fixer recording.mp4 --ffprobe /custom/ffprobe --ffmpeg /custom/ffmpeg
 ```
 
 ### Options
@@ -73,52 +65,24 @@ marker-fixer recording.mp4 --force
 - `--in-place <true|false>`: overwrite source file (default `true`)
 - `--output-suffix <suffix>`: suffix when `--in-place=false` (default `_fixed`)
 - `--force`: replace malformed existing XMP metadata
-- `--ffprobe <path>`: override ffprobe binary path
-- `--ffmpeg <path>`: reserved for future workflows
+- `--ffprobe <path>`: override ffprobe path
+- `--ffmpeg <path>`: override ffmpeg path
 - `-v, --verbose`: show additional diagnostics
 - `-n, --dry-run`: analyze only, do not write files
 
-## Output Statuses
+## Build from Source
 
-The tool prints one line per file:
+If you prefer local builds:
 
-- `[OK] ... -> converted`
-- `[PLAN] ... -> would convert` (dry-run)
-- `[SKIP] ... -> no embedded chapters found`
-- `[SKIP] ... -> not an .mp4 file`
-- `[ERR] ... -> <error details + hint>`
+```bash
+./build.sh
+```
 
-At the end, it prints a summary with totals.
-
-## Bundled FFmpeg/FFprobe Runtime Files
-
-This project is packaged with standalone FFmpeg runtime files (`ffmpeg`, `ffprobe`, and on Windows required `.dll` files).
-
-Runtime lookup order:
-1. explicit CLI override (`--ffprobe`)
-2. bundled files near executable: `fftools/<os>/<arch>/...`
-3. system `PATH`
-
-If bundled files are missing and `PATH` does not provide ffprobe, `marker-fixer` prints the exact expected location.
-
-## Build Artifacts
-
-`./build.sh` creates clean release packages in `build/` for:
-- `aarch64-apple-darwin`
-- `x86_64-apple-darwin`
-- `x86_64-unknown-linux-musl`
-- `x86_64-pc-windows-gnu`
-
-Each archive contains only required runtime files:
-- `marker-fixer` binary,
-- bundled `fftools` directory,
-- user docs and third-party notices.
-
-If you do not want to build locally, use the same packaged archives from the GitHub Releases page.
+Build outputs are written to `build/` as clean zipped artifacts.
 
 ## License and Third-Party Notice (FFmpeg)
 
-FFmpeg is licensed under GNU LGPL v2.1 (or later) for the build configuration used here.
+FFmpeg is licensed under GNU LGPL v2.1 (or later) for supported build configurations.
 
 - FFmpeg project: [https://ffmpeg.org](https://ffmpeg.org)
 - FFmpeg legal/license page: [https://ffmpeg.org/legal.html](https://ffmpeg.org/legal.html)

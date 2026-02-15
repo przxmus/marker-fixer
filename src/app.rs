@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use clap::{ArgAction, Parser};
 
 use crate::error::{IoResultExt, MarkerFixerError, Result};
+use crate::tools;
 use crate::{ffprobe, mp4, xmp};
 
 #[derive(Debug, Clone, Parser)]
@@ -54,7 +55,7 @@ pub struct Cli {
 
     #[arg(
         long = "ffmpeg",
-        help = "Path to ffmpeg binary (reserved for future processing steps)"
+        help = "Path to ffmpeg binary (overrides bundled/PATH/auto-download lookup)"
     )]
     pub ffmpeg: Option<PathBuf>,
 
@@ -122,10 +123,19 @@ impl App {
 
         print_preflight_summary(&cli, &files);
 
-        if cli.ffmpeg.is_some() && cli.verbose {
-            eprintln!(
-                "Note: --ffmpeg is currently reserved for future workflows. Current conversion uses ffprobe only."
-            );
+        if std::env::var("MARKER_FIXER_SKIP_RUNTIME_TOOL_BOOTSTRAP").as_deref() != Ok("1") {
+            if let Err(err) = tools::ensure_runtime_tools(
+                cli.ffprobe.as_deref(),
+                cli.ffmpeg.as_deref(),
+                cli.verbose,
+            ) {
+                return Err(MarkerFixerError::ExternalTool {
+                    tool: "runtime-tools",
+                    message: format!(
+                        "{err}. Ensure internet access or provide --ffprobe/--ffmpeg paths."
+                    ),
+                });
+            }
         }
 
         let reports = files

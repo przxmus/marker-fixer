@@ -117,52 +117,22 @@ if [[ $needs_zigbuild -eq 1 ]]; then
   fi
 fi
 
-normalize_target() {
+binary_name_for_target() {
   local target="$1"
   case "$target" in
-    aarch64-apple-darwin)
-      echo "macos arm64 marker-fixer"
-      ;;
-    x86_64-apple-darwin)
-      echo "macos x86_64 marker-fixer"
-      ;;
-    x86_64-unknown-linux-musl)
-      echo "linux x86_64 marker-fixer"
-      ;;
     x86_64-pc-windows-gnu)
-      echo "windows x86_64 marker-fixer.exe"
+      echo "marker-fixer.exe"
       ;;
     *)
-      echo "Unsupported target: $target" >&2
-      exit 1
+      echo "marker-fixer"
       ;;
   esac
 }
 
-ensure_bundled_tools() {
-  local platform="$1"
-  local arch="$2"
-  local vendor_dir="$ROOT_DIR/vendor/fftools/$platform/$arch"
-
-  if [[ ! -d "$vendor_dir" ]]; then
-    echo "Missing bundled tool directory: $vendor_dir" >&2
-    exit 1
-  fi
-
-  if [[ "$platform" == "windows" ]]; then
-    [[ -f "$vendor_dir/ffprobe.exe" ]] || { echo "Missing $vendor_dir/ffprobe.exe" >&2; exit 1; }
-    [[ -f "$vendor_dir/ffmpeg.exe" ]] || { echo "Missing $vendor_dir/ffmpeg.exe" >&2; exit 1; }
-  else
-    [[ -f "$vendor_dir/ffprobe" ]] || { echo "Missing $vendor_dir/ffprobe" >&2; exit 1; }
-    [[ -f "$vendor_dir/ffmpeg" ]] || { echo "Missing $vendor_dir/ffmpeg" >&2; exit 1; }
-  fi
-}
-
 build_target() {
   local target="$1"
-  read -r platform arch bin_name < <(normalize_target "$target")
-
-  ensure_bundled_tools "$platform" "$arch"
+  local bin_name
+  bin_name="$(binary_name_for_target "$target")"
 
   echo "Building target: $target"
   rustup target add "$target" >/dev/null
@@ -187,10 +157,9 @@ build_target() {
   local pkg_zip="$BUILD_DIR/${pkg_name}.zip"
 
   rm -rf "$pkg_dir" "$pkg_zip"
-  mkdir -p "$pkg_dir" "$pkg_dir/fftools/$platform/$arch"
+  mkdir -p "$pkg_dir"
 
   cp "$bin_path" "$pkg_dir/$bin_name"
-  cp -R "$ROOT_DIR/vendor/fftools/$platform/$arch/." "$pkg_dir/fftools/$platform/$arch/"
   cp "$ROOT_DIR/README.md" "$pkg_dir/README.md"
   cp "$ROOT_DIR/THIRD_PARTY_NOTICES.md" "$pkg_dir/THIRD_PARTY_NOTICES.md"
 

@@ -23,6 +23,7 @@ fn copy_fixture_to(temp: &TempDir, fixture: &str, target_name: &str) -> PathBuf 
 fn run_cli(args: &[&str]) -> std::process::Output {
     let bin = env!("CARGO_BIN_EXE_marker-fixer");
     Command::new(bin)
+        .env("MARKER_FIXER_SKIP_RUNTIME_TOOL_BOOTSTRAP", "1")
         .args(args)
         .output()
         .expect("failed to run marker-fixer")
