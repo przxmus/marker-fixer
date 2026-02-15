@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use clap::{ArgAction, Parser};
 
 use crate::error::{IoResultExt, MarkerFixerError, Result};
+use crate::ffprobe;
 
 #[derive(Debug, Clone, Parser)]
 #[command(name = "marker-fixer", version, about = "Convert OBS MP4 chapters into Premiere XMP markers")]
@@ -134,10 +135,42 @@ fn process_file(path: &Path, cli: &Cli) -> FileReport {
         eprintln!("Processing {}", path.display());
     }
 
-    // Placeholder until ffprobe/xmp/mp4 integration is implemented.
+    let probe = match ffprobe::probe_media(path, cli.ffprobe.as_deref()) {
+        Ok(probe) => probe,
+        Err(err) => {
+            return FileReport {
+                path: path.to_path_buf(),
+                status: FileStatus::Failed(err.to_string()),
+            };
+        }
+    };
+
+    if probe.chapters.is_empty() {
+        return FileReport {
+            path: path.to_path_buf(),
+            status: FileStatus::SkippedNoChapters,
+        };
+    }
+
+    if cli.verbose {
+        eprintln!(
+            "Detected {} chapter(s) at {:.6} fps in {}",
+            probe.chapters.len(),
+            probe.fps,
+            path.display()
+        );
+    }
+
+    if cli.dry_run {
+        return FileReport {
+            path: path.to_path_buf(),
+            status: FileStatus::Converted,
+        };
+    }
+
     FileReport {
         path: path.to_path_buf(),
-        status: FileStatus::SkippedNoChapters,
+        status: FileStatus::Failed("writer not implemented yet".to_string()),
     }
 }
 
