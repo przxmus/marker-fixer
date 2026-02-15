@@ -7,8 +7,5 @@ mod xmp;
 use app::App;
 
 fn main() {
-    if let Err(err) = App::run() {
-        eprintln!("error: {err}");
-        std::process::exit(1);
-    }
+    std::process::exit(App::run());
 }
