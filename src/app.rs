@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use clap::{ArgAction, Parser};
 
 use crate::error::{IoResultExt, MarkerFixerError, Result};
-use crate::ffprobe;
+use crate::{ffprobe, mp4, xmp};
 
 #[derive(Debug, Clone, Parser)]
 #[command(name = "marker-fixer", version, about = "Convert OBS MP4 chapters into Premiere XMP markers")]
@@ -67,6 +67,10 @@ impl App {
         let files = collect_input_files(&cli.paths)?;
         if files.is_empty() {
             return Err(MarkerFixerError::NoInputPaths);
+        }
+
+        if cli.ffmpeg.is_some() && cli.verbose {
+            eprintln!("Note: --ffmpeg is reserved for future use; current pipeline uses ffprobe only.");
         }
 
         let reports = files.iter().map(|path| process_file(path, &cli)).collect::<Vec<_>>();
@@ -152,14 +156,53 @@ fn process_file(path: &Path, cli: &Cli) -> FileReport {
         };
     }
 
-    if cli.verbose {
-        eprintln!(
-            "Detected {} chapter(s) at {:.6} fps in {}",
-            probe.chapters.len(),
-            probe.fps,
-            path.display()
-        );
-    }
+    let incoming_markers = probe
+        .chapters
+        .iter()
+        .map(|chapter| xmp::marker_from_chapter(chapter.start_seconds, chapter.title.as_deref(), probe.fps))
+        .collect::<Vec<_>>();
+
+    let existing_payload = match mp4::read_xmp_payload(path) {
+        Ok(payload) => payload,
+        Err(err) => {
+            return FileReport {
+                path: path.to_path_buf(),
+                status: FileStatus::Failed(err.to_string()),
+            };
+        }
+    };
+
+    let (existing_markers, frame_rate) = if let Some(payload) = existing_payload {
+        match String::from_utf8(payload) {
+            Ok(xml_data) => match xmp::parse_markers(&xml_data) {
+                Ok(parsed) => (parsed.markers, parsed.frame_rate.unwrap_or_else(|| probe.frame_rate_expr.clone())),
+                Err(err) if cli.force => (Vec::new(), probe.frame_rate_expr.clone()),
+                Err(err) => {
+                    return FileReport {
+                        path: path.to_path_buf(),
+                        status: FileStatus::Failed(err.to_string()),
+                    };
+                }
+            },
+            Err(err) if cli.force => {
+                if cli.verbose {
+                    eprintln!("Ignoring malformed UTF-8 XMP in {} due to --force: {err}", path.display());
+                }
+                (Vec::new(), probe.frame_rate_expr.clone())
+            }
+            Err(err) => {
+                return FileReport {
+                    path: path.to_path_buf(),
+                    status: FileStatus::Failed(format!("existing XMP is not UTF-8: {err}")),
+                };
+            }
+        }
+    } else {
+        (Vec::new(), probe.frame_rate_expr.clone())
+    };
+
+    let merged = xmp::merge_markers(existing_markers, incoming_markers);
+    let xmp_xml = xmp::generate_xmp(&frame_rate, &merged);
 
     if cli.dry_run {
         return FileReport {
@@ -168,10 +211,38 @@ fn process_file(path: &Path, cli: &Cli) -> FileReport {
         };
     }
 
+    let output_path = output_path_for(path, cli.in_place, &cli.output_suffix);
+    if let Err(err) = mp4::write_xmp_payload(path, &output_path, xmp_xml.as_bytes()) {
+        return FileReport {
+            path: path.to_path_buf(),
+            status: FileStatus::Failed(err.to_string()),
+        };
+    }
+
     FileReport {
         path: path.to_path_buf(),
-        status: FileStatus::Failed("writer not implemented yet".to_string()),
+        status: FileStatus::Converted,
     }
+}
+
+fn output_path_for(input: &Path, in_place: bool, output_suffix: &str) -> PathBuf {
+    if in_place {
+        return input.to_path_buf();
+    }
+
+    let stem = input
+        .file_stem()
+        .and_then(OsStr::to_str)
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "output".to_string());
+
+    let extension = input
+        .extension()
+        .and_then(OsStr::to_str)
+        .map(|value| format!(".{value}"))
+        .unwrap_or_default();
+
+    input.with_file_name(format!("{stem}{output_suffix}{extension}"))
 }
 
 fn is_mp4(path: &Path) -> bool {
@@ -190,5 +261,11 @@ mod tests {
         assert!(is_mp4(Path::new("video.mp4")));
         assert!(is_mp4(Path::new("video.MP4")));
         assert!(!is_mp4(Path::new("video.mov")));
+    }
+
+    #[test]
+    fn computes_output_path_when_not_in_place() {
+        let output = output_path_for(Path::new("/tmp/video.mp4"), false, "_fixed");
+        assert_eq!(output, Path::new("/tmp/video_fixed.mp4"));
     }
 }
