@@ -6,6 +6,16 @@ It updates MP4 metadata only (no video/audio re-encode).
 
 ## Quick Start
 
+1. Download a prebuilt package from GitHub Releases (recommended for most users).
+
+2. Unzip the archive for your OS and run:
+
+```bash
+./marker-fixer recording.mp4
+```
+
+Alternative (for developers): build from source.
+
 1. Build the project:
 
 ```bash
@@ -103,6 +113,8 @@ Each archive contains only required runtime files:
 - `marker-fixer` binary,
 - bundled `fftools` directory,
 - user docs and third-party notices.
+
+If you do not want to build locally, use the same packaged archives from the GitHub Releases page.
 
 ## License and Third-Party Notice (FFmpeg)
 
