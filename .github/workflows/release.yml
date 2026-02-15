@@ -117,6 +117,10 @@ jobs:
         if: matrix.install_zig
         uses: mlugg/setup-zig@v2
 
+      - name: Setup cargo-zigbuild
+        if: matrix.install_zig
+        uses: taiki-e/install-action@cargo-zigbuild
+
       - name: Build release artifacts
         shell: bash
         run: |

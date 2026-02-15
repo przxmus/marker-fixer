@@ -5,13 +5,6 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BUILD_DIR="$ROOT_DIR/build"
 STAGING_DIR="$BUILD_DIR/staging"
 
-DEFAULT_TARGETS=(
-  "aarch64-apple-darwin"
-  "x86_64-apple-darwin"
-  "x86_64-unknown-linux-musl"
-  "x86_64-pc-windows-gnu"
-)
-
 TARGETS=()
 KEEP_STAGING=0
 CLEAN=0
@@ -62,10 +55,6 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if [[ ${#TARGETS[@]} -eq 0 ]]; then
-  TARGETS=("${DEFAULT_TARGETS[@]}")
-fi
-
 if [[ -n "$VERSION_OVERRIDE" ]]; then
   VERSION="$VERSION_OVERRIDE"
 else
@@ -92,6 +81,49 @@ if ! command -v rustup >/dev/null 2>&1; then
   echo "rustup is required but was not found in PATH" >&2
   exit 1
 fi
+
+HOST_TRIPLE="$(rustc -vV | awk '/^host: / {print $2}')"
+HOST_OS="${HOST_TRIPLE##*-}"
+
+if [[ ${#TARGETS[@]} -eq 0 ]]; then
+  case "$HOST_OS" in
+    darwin)
+      TARGETS=(
+        "aarch64-apple-darwin"
+        "x86_64-apple-darwin"
+      )
+      ;;
+    linux)
+      TARGETS=(
+        "x86_64-unknown-linux-musl"
+        "x86_64-pc-windows-gnu"
+      )
+      ;;
+    windows|msvc|gnu)
+      TARGETS=(
+        "x86_64-pc-windows-gnu"
+      )
+      ;;
+    *)
+      echo "Unsupported host triple: $HOST_TRIPLE" >&2
+      echo "Use --targets to specify explicit Rust targets." >&2
+      exit 1
+      ;;
+  esac
+fi
+
+for target in "${TARGETS[@]}"; do
+  case "$target" in
+    aarch64-apple-darwin|x86_64-apple-darwin)
+      if [[ "$HOST_OS" != "darwin" ]]; then
+        echo "Target '$target' requires a macOS host runner." >&2
+        echo "Current host: $HOST_TRIPLE" >&2
+        echo "Use a macOS runner for Apple targets." >&2
+        exit 1
+      fi
+      ;;
+  esac
+done
 
 needs_zigbuild=0
 for target in "${TARGETS[@]}"; do
