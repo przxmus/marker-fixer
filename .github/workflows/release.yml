@@ -23,9 +23,13 @@ jobs:
     steps:
       - run: echo "Release workflow registration check completed."
 
-  release:
+  prepare:
     if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      tag: ${{ steps.meta.outputs.tag }}
+      release_commit: ${{ steps.meta.outputs.release_commit }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -37,9 +41,22 @@ jobs:
 
       - name: Cache Rust
         uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: marker-fixer-rust-cache-v1
+          cache-on-failure: true
 
-      - name: Setup Zig
-        uses: mlugg/setup-zig@v2
+      - name: Ensure tag is available
+        shell: bash
+        run: |
+          TAG="v${{ inputs.version }}"
+          if git rev-parse "$TAG" >/dev/null 2>&1; then
+            echo "Tag already exists locally: $TAG" >&2
+            exit 1
+          fi
+          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; then
+            echo "Tag already exists on origin: $TAG" >&2
+            exit 1
+          fi
 
       - name: Validate and bump version
         run: scripts/release/bump_version.sh "${{ inputs.version }}"
@@ -54,27 +71,117 @@ jobs:
             git push origin "${{ github.ref_name }}"
           fi
 
+      - id: meta
+        name: Save release metadata
+        shell: bash
+        run: |
+          {
+            echo "version=${{ inputs.version }}"
+            echo "tag=v${{ inputs.version }}"
+            echo "release_commit=$(git rev-parse HEAD)"
+          } >> "$GITHUB_OUTPUT"
+
+  build:
+    if: github.event_name == 'workflow_dispatch'
+    needs: prepare
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            targets: x86_64-unknown-linux-musl,x86_64-pc-windows-gnu
+            install_zig: true
+            artifact_name: linux-windows
+          - runner: macos-latest
+            targets: aarch64-apple-darwin,x86_64-apple-darwin
+            install_zig: false
+            artifact_name: macos
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Checkout release commit
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ needs.prepare.outputs.release_commit }}
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: marker-fixer-rust-cache-v1
+          cache-on-failure: true
+
+      - name: Setup Zig
+        if: matrix.install_zig
+        uses: mlugg/setup-zig@v2
+
+      - name: Build release artifacts
+        shell: bash
+        run: |
+          ./build.sh \
+            --version "${{ needs.prepare.outputs.version }}" \
+            --targets "${{ matrix.targets }}"
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.artifact_name }}
+          path: build/marker-fixer-v${{ needs.prepare.outputs.version }}-*.zip
+          if-no-files-found: error
+
+  draft-release:
+    if: github.event_name == 'workflow_dispatch'
+    needs:
+      - prepare
+      - build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
       - name: Create and push tag
         shell: bash
         run: |
-          TAG="v${{ inputs.version }}"
+          TAG="${{ needs.prepare.outputs.tag }}"
+          git fetch --tags origin
           if git rev-parse "$TAG" >/dev/null 2>&1; then
             echo "Tag already exists: $TAG" >&2
             exit 1
           fi
-          git tag "$TAG"
+          git tag "$TAG" "${{ needs.prepare.outputs.release_commit }}"
           git push origin "$TAG"
 
-      - name: Build all release artifacts
-        run: ./build.sh --version "${{ inputs.version }}" --clean
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          merge-multiple: true
+          path: dist
+
+      - name: Build checksum file
+        shell: bash
+        run: |
+          cd dist
+          shopt -s nullglob
+          files=(marker-fixer-v${{ needs.prepare.outputs.version }}-*.zip)
+          if [[ ${#files[@]} -eq 0 ]]; then
+            echo "No release zip artifacts found." >&2
+            exit 1
+          fi
+          sha256sum "${files[@]}" | sort > sha256sums.txt
 
       - name: Create draft release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v${{ inputs.version }}
-          name: marker-fixer v${{ inputs.version }}
+          tag_name: ${{ needs.prepare.outputs.tag }}
+          target_commitish: ${{ needs.prepare.outputs.release_commit }}
+          name: marker-fixer v${{ needs.prepare.outputs.version }}
           draft: true
           generate_release_notes: true
           files: |
-            build/*.zip
-            build/sha256sums.txt
+            dist/*.zip
+            dist/sha256sums.txt

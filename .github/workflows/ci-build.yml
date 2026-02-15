@@ -45,6 +45,7 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
         with:
+          shared-key: marker-fixer-rust-cache-v1
           cache-on-failure: true
 
       - name: Run tests
