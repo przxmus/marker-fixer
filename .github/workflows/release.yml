@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: Release version (example: 1.2.3)
+        description: "Release version (example: 1.2.3)"
         required: true
         type: string
   push:
