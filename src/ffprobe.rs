@@ -14,6 +14,7 @@ pub struct ChapterInput {
 #[derive(Debug, Clone)]
 pub struct ProbeData {
     pub fps: f64,
+    pub frame_rate_expr: String,
     pub chapters: Vec<ChapterInput>,
 }
 
@@ -72,10 +73,10 @@ pub fn probe_media(file_path: &Path, ffprobe_override: Option<&Path>) -> Result<
         });
     }
 
-    let parsed: ProbeOutput =
-        serde_json::from_slice(&output.stdout).map_err(|err| MarkerFixerError::InvalidMetadata(format!("invalid ffprobe json: {err}")))?;
+    let parsed: ProbeOutput = serde_json::from_slice(&output.stdout)
+        .map_err(|err| MarkerFixerError::InvalidMetadata(format!("invalid ffprobe json: {err}")))?;
 
-    let fps = detect_fps(&parsed.streams)?;
+    let (fps, frame_rate_expr) = detect_fps(&parsed.streams)?;
     let chapters = parsed
         .chapters
         .into_iter()
@@ -83,15 +84,23 @@ pub fn probe_media(file_path: &Path, ffprobe_override: Option<&Path>) -> Result<
             let start_seconds = chapter.start_time.parse::<f64>().ok()?;
             Some(ChapterInput {
                 start_seconds,
-                title: chapter.tags.and_then(|tags| tags.title).map(|value| value.trim().to_string()).filter(|value| !value.is_empty()),
+                title: chapter
+                    .tags
+                    .and_then(|tags| tags.title)
+                    .map(|value| value.trim().to_string())
+                    .filter(|value| !value.is_empty()),
             })
         })
         .collect();
 
-    Ok(ProbeData { fps, chapters })
+    Ok(ProbeData {
+        fps,
+        frame_rate_expr,
+        chapters,
+    })
 }
 
-fn detect_fps(streams: &[ProbeStream]) -> Result<f64> {
+fn detect_fps(streams: &[ProbeStream]) -> Result<(f64, String)> {
     let video_stream = streams
         .iter()
         .find(|stream| stream.codec_type.as_deref() == Some("video"))
@@ -99,13 +108,13 @@ fn detect_fps(streams: &[ProbeStream]) -> Result<f64> {
 
     if let Some(rate) = &video_stream.avg_frame_rate {
         if let Some(fps) = parse_rate(rate) {
-            return Ok(fps);
+            return Ok((fps, normalize_frame_rate_expr(rate)));
         }
     }
 
     if let Some(rate) = &video_stream.r_frame_rate {
         if let Some(fps) = parse_rate(rate) {
-            return Ok(fps);
+            return Ok((fps, normalize_frame_rate_expr(rate)));
         }
     }
 
@@ -114,20 +123,36 @@ fn detect_fps(streams: &[ProbeStream]) -> Result<f64> {
     ))
 }
 
+fn normalize_frame_rate_expr(value: &str) -> String {
+    if let Some((n, d)) = parse_rational_parts(value) {
+        if d == 1 {
+            return format!("f{n}");
+        }
+        return format!("f{n}/{d}");
+    }
+
+    format!("f{}", value.trim())
+}
+
 fn parse_rate(value: &str) -> Option<f64> {
-    let mut parts = value.split('/');
-    let numerator = parts.next()?.parse::<f64>().ok()?;
-    let denominator = parts.next()?.parse::<f64>().ok()?;
-    if denominator == 0.0 {
+    let (numerator, denominator) = parse_rational_parts(value)?;
+    if denominator == 0 {
         return None;
     }
 
-    let fps = numerator / denominator;
+    let fps = numerator as f64 / denominator as f64;
     if fps.is_finite() && fps > 0.0 {
         Some(fps)
     } else {
         None
     }
+}
+
+fn parse_rational_parts(value: &str) -> Option<(u64, u64)> {
+    let mut parts = value.split('/');
+    let numerator = parts.next()?.trim().parse::<u64>().ok()?;
+    let denominator = parts.next()?.trim().parse::<u64>().ok()?;
+    Some((numerator, denominator))
 }
 
 fn resolve_ffprobe_path(ffprobe_override: Option<&Path>) -> Result<PathBuf> {
@@ -189,5 +214,11 @@ mod tests {
             let parsed = parse_rate(rate).expect("rate should parse");
             assert!((parsed - expected).abs() < 0.000_001);
         }
+    }
+
+    #[test]
+    fn normalizes_frame_rate_expr_for_xmp() {
+        assert_eq!(normalize_frame_rate_expr("60/1"), "f60");
+        assert_eq!(normalize_frame_rate_expr("30000/1001"), "f30000/1001");
     }
 }
