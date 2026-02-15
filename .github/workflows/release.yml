@@ -7,12 +7,24 @@ on:
         description: Release version (example: 1.2.3)
         required: true
         type: string
+  push:
+    branches:
+      - master
+    paths:
+      - .github/workflows/release.yml
 
 permissions:
   contents: write
 
 jobs:
+  register:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Release workflow registration check completed."
+
   release:
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
