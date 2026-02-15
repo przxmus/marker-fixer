@@ -1,0 +1,99 @@
+name: CI Build
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      build_needed: ${{ steps.evaluate.outputs.build_needed }}
+      reason: ${{ steps.evaluate.outputs.reason }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - id: shas
+        shell: bash
+        run: |
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            echo "base_sha=${{ github.event.pull_request.base.sha }}" >> "$GITHUB_OUTPUT"
+            echo "head_sha=${{ github.event.pull_request.head.sha }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "base_sha=${{ github.event.before }}" >> "$GITHUB_OUTPUT"
+            echo "head_sha=${{ github.sha }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - id: evaluate
+        shell: bash
+        run: |
+          scripts/ci/evaluate_changes.sh "${{ steps.shas.outputs.base_sha }}" "${{ steps.shas.outputs.head_sha }}"
+
+  test:
+    needs: changes
+    if: needs.changes.outputs.build_needed == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+
+      - name: Run tests
+        run: cargo test
+
+  build:
+    needs: changes
+    if: needs.changes.outputs.build_needed == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            targets: x86_64-unknown-linux-musl,x86_64-pc-windows-gnu
+            artifact_name: marker-fixer-build-ubuntu
+          - os: macos-latest
+            targets: aarch64-apple-darwin,x86_64-apple-darwin
+            artifact_name: marker-fixer-build-macos
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+
+      - name: Setup Zig (for cross builds)
+        if: runner.os == 'Linux'
+        uses: mlugg/setup-zig@v2
+
+      - name: Build release packages
+        run: ./build.sh --targets "${{ matrix.targets }}" --clean
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: |
+            build/*.zip
+            build/sha256sums.txt
+          if-no-files-found: error
+
+  skipped:
+    needs: changes
+    if: needs.changes.outputs.build_needed != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Build skipped
+        run: |
+          echo "Skipping tests/build: ${{ needs.changes.outputs.reason }}"
