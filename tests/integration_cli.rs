@@ -122,7 +122,7 @@ fn merge_run_does_not_duplicate_existing_markers() {
         String::from_utf8_lossy(&second.stderr)
     );
 
-    let second_output = temp.path().join("input_fixed_fixed.mp4");
+    let second_output = temp.path().join("input_fixed_marked.mp4");
     assert!(second_output.exists());
     assert_eq!(count_xmp_markers(&second_output), 12);
 }
@@ -143,7 +143,7 @@ fn malformed_xmp_requires_force_flag() {
         String::from_utf8_lossy(&bootstrap.stdout),
         String::from_utf8_lossy(&bootstrap.stderr)
     );
-    let output_file = temp.path().join("input_fixed.mp4");
+    let output_file = temp.path().join("input_marked.mp4");
     corrupt_existing_xmp(&output_file);
 
     let without_force = run_cli(&[output_file.to_str().unwrap()]);
@@ -178,7 +178,7 @@ fn processing_never_overwrites_original_input_file() {
 
     let after = fs::read(&input).expect("failed to read input after run");
     assert_eq!(before, after, "original input should stay untouched");
-    assert!(temp.path().join("input_fixed.mp4").exists());
+    assert!(temp.path().join("input_marked.mp4").exists());
 }
 
 #[test]

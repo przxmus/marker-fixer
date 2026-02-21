@@ -14,7 +14,7 @@ use crate::{ffprobe, mp4, xmp};
     version,
     about = "Convert OBS MP4 chapters into Adobe Premiere Pro markers.",
     long_about = "marker-fixer reads chapter markers from OBS MP4 files and writes Premiere-compatible XMP markers into the MP4 metadata.\n\nYou can pass files, directories (non-recursive), or drag-and-drop multiple files onto the executable.",
-    after_help = "Examples:\n  marker-fixer recording.mp4\n  marker-fixer recording.mp4 --output-suffix _fixed\n  marker-fixer ./captures --dry-run\n\nTip: If a file has malformed existing XMP, rerun with --force to replace it."
+    after_help = "Examples:\n  marker-fixer recording.mp4\n  marker-fixer recording.mp4 --output-suffix _marked\n  marker-fixer ./captures --dry-run\n\nTip: If a file has malformed existing XMP, rerun with --force to replace it."
 )]
 pub struct Cli {
     #[arg(
@@ -26,7 +26,7 @@ pub struct Cli {
 
     #[arg(
         long = "output-suffix",
-        default_value = "_fixed",
+        default_value = "_marked",
         value_parser = NonEmptyStringValueParser::new(),
         help = "Suffix for output filename (output is always a new sibling file)"
     )]
@@ -404,7 +404,7 @@ mod tests {
 
     #[test]
     fn computes_output_path_for_export_file() {
-        let output = output_path_for(Path::new("/tmp/video.mp4"), "_fixed");
-        assert_eq!(output, Path::new("/tmp/video_fixed.mp4"));
+        let output = output_path_for(Path::new("/tmp/video.mp4"), "_marked");
+        assert_eq!(output, Path::new("/tmp/video_marked.mp4"));
     }
 }

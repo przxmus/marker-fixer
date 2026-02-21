@@ -45,7 +45,7 @@ marker-fixer [PATH ...] [OPTIONS]
 marker-fixer recording.mp4
 
 # Write to a sibling file with custom suffix
-marker-fixer recording.mp4 --output-suffix _fixed
+marker-fixer recording.mp4 --output-suffix _marked
 
 # Process a directory (non-recursive)
 marker-fixer ./captures
@@ -62,7 +62,7 @@ marker-fixer recording.mp4 --ffprobe /custom/ffprobe --ffmpeg /custom/ffmpeg
 
 ### Options
 
-- `--output-suffix <suffix>`: suffix for output sibling file (default `_fixed`, cannot be empty)
+- `--output-suffix <suffix>`: suffix for output sibling file (default `_marked`, cannot be empty)
 - `--force`: replace malformed existing XMP metadata
 - `--ffprobe <path>`: override ffprobe path
 - `--ffmpeg <path>`: override ffmpeg path
