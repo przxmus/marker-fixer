@@ -2,7 +2,7 @@ use std::ffi::OsStr;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use clap::{ArgAction, Parser};
+use clap::{builder::NonEmptyStringValueParser, Parser};
 
 use crate::error::{IoResultExt, MarkerFixerError, Result};
 use crate::tools;
@@ -14,7 +14,7 @@ use crate::{ffprobe, mp4, xmp};
     version,
     about = "Convert OBS MP4 chapters into Adobe Premiere Pro markers.",
     long_about = "marker-fixer reads chapter markers from OBS MP4 files and writes Premiere-compatible XMP markers into the MP4 metadata.\n\nYou can pass files, directories (non-recursive), or drag-and-drop multiple files onto the executable.",
-    after_help = "Examples:\n  marker-fixer recording.mp4\n  marker-fixer recording.mp4 --in-place false --output-suffix _fixed\n  marker-fixer ./captures --dry-run\n\nTip: If a file has malformed existing XMP, rerun with --force to replace it."
+    after_help = "Examples:\n  marker-fixer recording.mp4\n  marker-fixer recording.mp4 --output-suffix _fixed\n  marker-fixer ./captures --dry-run\n\nTip: If a file has malformed existing XMP, rerun with --force to replace it."
 )]
 pub struct Cli {
     #[arg(
@@ -25,18 +25,10 @@ pub struct Cli {
     pub paths: Vec<PathBuf>,
 
     #[arg(
-        long = "in-place",
-        action = ArgAction::Set,
-        default_value_t = true,
-        help = "Overwrite the source file",
-        long_help = "If true (default), marker-fixer updates each source file directly. If false, it writes a sibling file using --output-suffix."
-    )]
-    pub in_place: bool,
-
-    #[arg(
         long = "output-suffix",
         default_value = "_fixed",
-        help = "Suffix for output filename when --in-place=false"
+        value_parser = NonEmptyStringValueParser::new(),
+        help = "Suffix for output filename (output is always a new sibling file)"
     )]
     pub output_suffix: String,
 
@@ -157,15 +149,11 @@ fn print_preflight_summary(cli: &Cli, files: &[PathBuf]) {
         "- Mode: {}",
         if cli.dry_run {
             "dry-run (no files will be changed)"
-        } else if cli.in_place {
-            "in-place overwrite"
         } else {
-            "write alongside source files"
+            "write alongside source files (never overwrite input)"
         }
     );
-    if !cli.in_place {
-        println!("- Output suffix: {}", cli.output_suffix);
-    }
+    println!("- Output suffix: {}", cli.output_suffix);
     if cli.force {
         println!("- Force mode: enabled (malformed existing XMP will be replaced)");
     }
@@ -366,7 +354,7 @@ fn process_file(path: &Path, cli: &Cli) -> FileReport {
         };
     }
 
-    let output_path = output_path_for(path, cli.in_place, &cli.output_suffix);
+    let output_path = output_path_for(path, &cli.output_suffix);
     if let Err(err) = mp4::write_xmp_payload(path, &output_path, xmp_xml.as_bytes()) {
         return FileReport {
             path: path.to_path_buf(),
@@ -380,11 +368,7 @@ fn process_file(path: &Path, cli: &Cli) -> FileReport {
     }
 }
 
-fn output_path_for(input: &Path, in_place: bool, output_suffix: &str) -> PathBuf {
-    if in_place {
-        return input.to_path_buf();
-    }
-
+fn output_path_for(input: &Path, output_suffix: &str) -> PathBuf {
     let stem = input
         .file_stem()
         .and_then(OsStr::to_str)
@@ -419,8 +403,8 @@ mod tests {
     }
 
     #[test]
-    fn computes_output_path_when_not_in_place() {
-        let output = output_path_for(Path::new("/tmp/video.mp4"), false, "_fixed");
+    fn computes_output_path_for_export_file() {
+        let output = output_path_for(Path::new("/tmp/video.mp4"), "_fixed");
         assert_eq!(output, Path::new("/tmp/video_fixed.mp4"));
     }
 }

@@ -77,8 +77,6 @@ fn converts_obs_chapters_into_xmp_markers() {
 
     let output = run_cli(&[
         input.to_str().unwrap(),
-        "--in-place",
-        "false",
         "--output-suffix",
         "_fixed",
     ]);
@@ -110,8 +108,6 @@ fn merge_run_does_not_duplicate_existing_markers() {
 
     let first = run_cli(&[
         input.to_str().unwrap(),
-        "--in-place",
-        "false",
         "--output-suffix",
         "_fixed",
     ]);
@@ -126,7 +122,9 @@ fn merge_run_does_not_duplicate_existing_markers() {
         String::from_utf8_lossy(&second.stderr)
     );
 
-    assert_eq!(count_xmp_markers(&output_file), 12);
+    let second_output = temp.path().join("input_fixed_fixed.mp4");
+    assert!(second_output.exists());
+    assert_eq!(count_xmp_markers(&second_output), 12);
 }
 
 #[test]
@@ -145,18 +143,42 @@ fn malformed_xmp_requires_force_flag() {
         String::from_utf8_lossy(&bootstrap.stdout),
         String::from_utf8_lossy(&bootstrap.stderr)
     );
-    corrupt_existing_xmp(&input);
+    let output_file = temp.path().join("input_fixed.mp4");
+    corrupt_existing_xmp(&output_file);
 
-    let without_force = run_cli(&[input.to_str().unwrap()]);
+    let without_force = run_cli(&[output_file.to_str().unwrap()]);
     assert!(!without_force.status.success());
 
-    let with_force = run_cli(&[input.to_str().unwrap(), "--force"]);
+    let with_force = run_cli(&[output_file.to_str().unwrap(), "--force"]);
     assert!(
         with_force.status.success(),
         "stdout: {}\nstderr: {}",
         String::from_utf8_lossy(&with_force.stdout),
         String::from_utf8_lossy(&with_force.stderr)
     );
+}
+
+#[test]
+fn processing_never_overwrites_original_input_file() {
+    if !fixture_exists("direct obs example with markers.mp4") {
+        eprintln!("Skipping: fixture not present");
+        return;
+    }
+    let temp = TempDir::new().expect("failed to create tempdir");
+    let input = copy_fixture_to(&temp, "direct obs example with markers.mp4", "input.mp4");
+    let before = fs::read(&input).expect("failed to read input before run");
+
+    let output = run_cli(&[input.to_str().unwrap()]);
+    assert!(
+        output.status.success(),
+        "stdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let after = fs::read(&input).expect("failed to read input after run");
+    assert_eq!(before, after, "original input should stay untouched");
+    assert!(temp.path().join("input_fixed.mp4").exists());
 }
 
 #[test]
