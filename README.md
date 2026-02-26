@@ -1,3 +1,5 @@
+# use [better markers](https://github.com/przxmus/better-markers) instead.
+
 # marker-fixer
 
 `marker-fixer` is a command-line tool that converts OBS MP4 chapter markers into Adobe Premiere Pro-compatible XMP markers.
